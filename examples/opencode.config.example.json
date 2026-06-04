@@ -5,7 +5,12 @@
       "type": "local",
       "command": ["bun", "run", "mcp"],
       "environment": {
-        "OC_MEMORY_DATABASE_URL": "postgresql://USER:PASSWORD@HOST:5432/oc_memory"
+        "OC_MEMORY_DATABASE_URL": "postgresql://USER:PASSWORD@HOST:5432/oc_memory",
+        "OC_MEMORY_EMBEDDING_API_KEY": "REPLACE_WITH_EMBEDDING_API_KEY",
+        "OC_MEMORY_EMBEDDING_MODEL": "text-embedding-3-small",
+        "OC_MEMORY_EMBEDDING_DIMENSIONS": "1536",
+        "OC_MEMORY_EMBEDDING_URL": "https://api.openai.com/v1/embeddings",
+        "OC_MEMORY_EMBEDDING_TIMEOUT_MS": "15000"
       },
       "enabled": true
     }

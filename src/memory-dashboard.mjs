@@ -123,7 +123,27 @@ async function listMemories(searchParams) {
 }
 
 async function stats() {
-  const [summary, byCategory, byNamespace, expiry, usage] = await Promise.all([
+  const embeddingColumn = await pool.query(`
+    select exists (
+      select 1
+      from information_schema.columns
+      where table_schema = current_schema()
+        and table_name = 'agent_memories'
+        and column_name = 'embedding'
+    ) as exists
+  `);
+  const hasEmbeddingColumn = Boolean(embeddingColumn.rows[0]?.exists);
+
+  const embeddingStatsQuery = hasEmbeddingColumn
+    ? pool.query(`
+      select
+        count(*) filter (where embedding is not null)::int as embedded_count,
+        count(*) filter (where embedding is null)::int as missing_embedding_count
+      from agent_memories
+    `)
+    : Promise.resolve({ rows: [{ embedded_count: 0, missing_embedding_count: 0 }] });
+
+  const [summary, byCategory, byNamespace, expiry, usage, embeddingStats] = await Promise.all([
     pool.query(`
       select
         count(*)::int as total,
@@ -162,17 +182,24 @@ async function stats() {
       where expires_at is null or expires_at > now()
       order by access_count desc, last_accessed_at desc nulls last
       limit 10
-    `)
+    `),
+    embeddingStatsQuery
   ]);
 
   const s = summary.rows[0];
   const total = Number(s.total || 0);
   const used = Number(s.used_memories || 0);
+  const embedded = Number(embeddingStats.rows[0]?.embedded_count || 0);
+  const missing = Number(embeddingStats.rows[0]?.missing_embedding_count || 0);
 
   return {
     summary: {
       ...s,
-      usage_rate: total === 0 ? 0 : Number((used / total).toFixed(4))
+      usage_rate: total === 0 ? 0 : Number((used / total).toFixed(4)),
+      embedding_column_exists: hasEmbeddingColumn,
+      embedded_count: embedded,
+      missing_embedding_count: hasEmbeddingColumn ? missing : total,
+      embedding_coverage_rate: hasEmbeddingColumn && total > 0 ? Number((embedded / total).toFixed(4)) : 0
     },
     by_category: byCategory.rows,
     by_namespace: byNamespace.rows,
@@ -260,7 +287,7 @@ const page = `<!doctype html>
     h1 { margin: 0 0 6px; font-size: 24px; }
     header p { margin: 0; opacity: .82; }
     main { padding: 20px 28px 40px; max-width: 1480px; margin: 0 auto; }
-    .cards { display: grid; grid-template-columns: repeat(6, minmax(120px, 1fr)); gap: var(--gap); margin-bottom: 18px; }
+    .cards { display: grid; grid-template-columns: repeat(7, minmax(120px, 1fr)); gap: var(--gap); margin-bottom: 18px; }
     .card, .panel { background: rgba(255,255,255,.075); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; box-shadow: 0 12px 36px rgba(0,0,0,.18); }
     .card { padding: 14px; }
     .label { color: #aeb9e8; font-size: 12px; }
@@ -387,6 +414,7 @@ const page = `<!doctype html>
       $('cards').innerHTML = [
         card('总记忆', s.total),
         card('使用率', Math.round((s.usage_rate || 0) * 100) + '%', '访问过 / 总数'),
+        card('向量覆盖', Math.round((s.embedding_coverage_rate || 0) * 100) + '%', s.embedding_column_exists ? (s.embedded_count + ' 已嵌入 · ' + s.missing_embedding_count + ' 缺失') : '未启用 pgvector'),
         card('总访问', s.total_accesses),
         card('永久', s.permanent),
         card('14 天内遗忘', s.expiring_soon),

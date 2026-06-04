@@ -7,6 +7,7 @@ PostgreSQL-backed long-term memory for OpenCode, packaged as a Model Context Pro
 - MCP tools for adding, searching, updating, deleting, confirming, and cleaning memories.
 - Contextual search priority: `repo:<absolute-path>` > `project:<name>` > `global`.
 - PostgreSQL persistence with indexes and full-text search support.
+- Optional pgvector semantic search with OpenAI-compatible embeddings.
 - Local dashboard for memory contents, usage, expiry, and cleanup candidates.
 - Category-based TTL and forgetting behavior.
 
@@ -17,7 +18,7 @@ MIT
 ## Requirements
 
 - Bun or Node.js 20+
-- PostgreSQL
+- PostgreSQL (optional: `pgvector` extension for semantic search)
 - `OC_MEMORY_DATABASE_URL` environment variable
 
 No database URL, password, API key, or secret is embedded in this project. Both the MCP server and dashboard require `OC_MEMORY_DATABASE_URL`.
@@ -52,6 +53,25 @@ export OC_MEMORY_DATABASE_URL='postgresql://oc_memory_user:REPLACE_WITH_A_STRONG
 
 The MCP server initializes the `agent_memories` schema automatically on startup.
 
+### Optional semantic search setup
+
+Semantic search is disabled unless embedding configuration is present. Text and contextual search continue to work without it.
+
+Set these environment variables to enable OpenAI-compatible embeddings:
+
+```sh
+export OC_MEMORY_EMBEDDING_API_KEY='REPLACE_WITH_EMBEDDING_API_KEY'
+export OC_MEMORY_EMBEDDING_MODEL='text-embedding-3-small'
+export OC_MEMORY_EMBEDDING_DIMENSIONS='1536'
+# Optional; defaults to OpenAI embeddings endpoint when API key + model are set.
+export OC_MEMORY_EMBEDDING_URL='https://api.openai.com/v1/embeddings'
+export OC_MEMORY_EMBEDDING_TIMEOUT_MS='15000'
+```
+
+When enabled, startup tries to run `CREATE EXTENSION IF NOT EXISTS vector`, add `agent_memories.embedding vector(<dimensions>)`, and create a vector index. If the extension, column migration, or index creation is unavailable, the MCP logs a warning and keeps running with normal text search.
+
+If an existing `embedding` column has a different dimension than the configured/generated embedding dimension, semantic search is disabled rather than running an incompatible `ALTER TABLE`.
+
 ## Scripts
 
 ```sh
@@ -69,14 +89,19 @@ See [`examples/opencode.config.example.json`](examples/opencode.config.example.j
 
 Example shape:
 
-```json
+```jsonc
 {
   "mcp": {
     "oc-memory": {
       "type": "local",
       "command": ["bun", "run", "mcp"],
       "environment": {
-        "OC_MEMORY_DATABASE_URL": "postgresql://USER:PASSWORD@HOST:5432/oc_memory"
+        "OC_MEMORY_DATABASE_URL": "postgresql://USER:PASSWORD@HOST:5432/oc_memory",
+        /* Optional semantic search:
+        "OC_MEMORY_EMBEDDING_API_KEY": "REPLACE_WITH_EMBEDDING_API_KEY",
+        "OC_MEMORY_EMBEDDING_MODEL": "text-embedding-3-small",
+        "OC_MEMORY_EMBEDDING_DIMENSIONS": "1536"
+        */
       },
       "enabled": true
     }
@@ -121,6 +146,9 @@ A launchd example is available at [`examples/launchd/cc.geekland.oc-memory-dashb
 - `memory_add`: add or upsert a durable memory. If `key` is provided, `namespace + category + key` is upserted.
 - `memory_search`: search active memories by text, namespace, and category.
 - `memory_context_search`: search contextual scopes with priority `repo > project > global`.
+- `memory_semantic_search`: semantic similarity search using optional pgvector embeddings; supports contextual `repo_path`/`project` priority and `min_similarity`.
+- `memory_backfill_embeddings`: dry-run or fill missing embeddings for existing memories.
+- `memory_embedding_status`: report embedding config/schema status and coverage counts.
 - `memory_update`: update a memory by id.
 - `memory_delete`: delete a memory by id.
 - `memory_list_categories`: list namespaces/categories with counts.
@@ -149,3 +177,5 @@ Forgetting policy:
 ## Memory usage guidance
 
 See [`docs/memory.md`](docs/memory.md) for suggested OpenCode instructions and tool usage policy.
+
+Use `memory_semantic_search` when wording may differ from the stored memory, and keep `memory_search` / `memory_context_search` for exact text, category, or recency-oriented lookups.
