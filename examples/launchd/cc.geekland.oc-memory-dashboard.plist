@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>cc.geekland.oc-memory-dashboard</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/PATH/TO/bun</string>
+    <string>run</string>
+    <string>start</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/PATH/TO/opencode-memory</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OC_MEMORY_DATABASE_URL</key>
+    <string>postgresql://USER:PASSWORD@HOST:5432/oc_memory</string>
+    <key>OC_MEMORY_DASHBOARD_HOST</key>
+    <string>127.0.0.1</string>
+    <key>OC_MEMORY_DASHBOARD_PORT</key>
+    <string>18765</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/PATH/TO/logs/oc-memory-dashboard.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/PATH/TO/logs/oc-memory-dashboard.err.log</string>
+</dict>
+</plist>

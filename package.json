@@ -1,0 +1,26 @@
+{
+  "name": "opencode-memory",
+  "version": "1.0.0",
+  "description": "PostgreSQL-backed OpenCode long-term memory MCP server and dashboard.",
+  "type": "module",
+  "bin": {
+    "oc-memory": "./src/oc-memory.mjs",
+    "oc-memory-dashboard": "./src/memory-dashboard.mjs"
+  },
+  "scripts": {
+    "mcp": "bun src/oc-memory.mjs",
+    "dashboard": "bun src/memory-dashboard.mjs",
+    "start": "bun src/memory-dashboard.mjs",
+    "mcp:node": "node src/oc-memory.mjs",
+    "dashboard:node": "node src/memory-dashboard.mjs",
+    "check": "node --check src/oc-memory.mjs && node --check src/memory-dashboard.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "pg": "^8.16.3",
+    "zod": "^4.0.17"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "oc-memory": {
+      "type": "local",
+      "command": ["bun", "run", "mcp"],
+      "environment": {
+        "OC_MEMORY_DATABASE_URL": "postgresql://USER:PASSWORD@HOST:5432/oc_memory"
+      },
+      "enabled": true
+    }
+  }
+}
