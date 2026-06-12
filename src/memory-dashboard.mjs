@@ -477,8 +477,8 @@ const page = `<!doctype html>
     .rank-text { font-size: 13px; line-height: 1.35; color: #eef2ff; word-break: break-word; }
     .rank-meter { height: 6px; border-radius: 999px; background: rgba(255,255,255,.10); overflow: hidden; margin-top: 10px; }
     .rank-meter > div { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #52d399, #8d81ff); }
-    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-    .actions button { padding: 7px 9px; font-size: 12px; }
+    .actions { display: grid; grid-template-columns: 72px; gap: 8px; align-items: center; }
+    .actions button { width: 72px; padding: 7px 0; font-size: 12px; text-align: center; }
     button.danger { background: rgba(255, 93, 93, .24); border-color: rgba(255, 93, 93, .55); color: #ffdddd; }
     dialog { width: min(760px, calc(100vw - 34px)); border: 1px solid rgba(255,255,255,.18); border-radius: 16px; background: #10172a; color: #e7ecff; box-shadow: 0 30px 90px rgba(0,0,0,.55); }
     dialog::backdrop { background: rgba(0,0,0,.65); backdrop-filter: blur(2px); }
