@@ -118,7 +118,7 @@ async function refreshEmbeddingStatus() {
   try {
     const extension = await pool.query("select exists(select 1 from pg_extension where extname = 'vector') as exists");
     const column = await pool.query(`
-      select (a.atttypmod - 4) as dimensions
+      select a.atttypmod as dimensions
       from pg_attribute a
       join pg_class c on c.oid = a.attrelid
       join pg_namespace n on n.oid = c.relnamespace
