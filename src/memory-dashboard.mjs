@@ -38,6 +38,26 @@ function notFound(res) {
   json(res, { error: 'not found' }, 404);
 }
 
+function badRequest(res, message) {
+  json(res, { error: message }, 400);
+}
+
+function parseMemoryId(pathname) {
+  const match = pathname.match(/^\/api\/memories\/(\d+)$/);
+  return match ? Number(match[1]) : null;
+}
+
+async function readJsonBody(req) {
+  let body = '';
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 1024 * 1024) throw new Error('request body too large');
+  }
+
+  if (!body.trim()) return {};
+  return JSON.parse(body);
+}
+
 function numberParam(searchParams, name, fallback, min, max) {
   const raw = searchParams.get(name);
   if (raw === null) return fallback;
@@ -120,6 +140,138 @@ async function listMemories(searchParams) {
   `, params);
 
   return result.rows;
+}
+
+async function getMemory(id) {
+  const result = await pool.query(`
+    select
+      id,
+      namespace,
+      category,
+      key,
+      content,
+      metadata,
+      importance,
+      confidence,
+      created_at,
+      updated_at,
+      last_accessed_at,
+      access_count,
+      last_confirmed_at,
+      expires_at
+    from agent_memories
+    where id = $1
+  `, [id]);
+
+  return result.rows[0] ?? null;
+}
+
+function validateEditableMemory(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('request body must be a JSON object');
+  }
+
+  const allowed = new Set(['namespace', 'category', 'key', 'content', 'metadata', 'importance', 'confidence', 'expires_at']);
+  const output = {};
+
+  for (const [field, value] of Object.entries(input)) {
+    if (!allowed.has(field)) throw new Error(`field is not editable: ${field}`);
+
+    if (field === 'namespace' || field === 'category' || field === 'content') {
+      if (typeof value !== 'string') throw new Error(`${field} must be a string`);
+      const trimmed = value.trim();
+      if (!trimmed) throw new Error(`${field} cannot be empty`);
+      output[field] = field === 'content' ? value : trimmed;
+      continue;
+    }
+
+    if (field === 'key') {
+      if (value === null || value === '') output.key = null;
+      else if (typeof value === 'string') output.key = value;
+      else throw new Error('key must be a string or null');
+      continue;
+    }
+
+    if (field === 'metadata') {
+      let metadata = value;
+      if (typeof metadata === 'string') metadata = JSON.parse(metadata || '{}');
+      if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+        throw new Error('metadata must be a JSON object or a JSON string containing an object');
+      }
+      output.metadata = metadata;
+      continue;
+    }
+
+    if (field === 'importance') {
+      const n = Number(value);
+      if (!Number.isInteger(n) || n < 0 || n > 10) throw new Error('importance must be an integer from 0 to 10');
+      output.importance = n;
+      continue;
+    }
+
+    if (field === 'confidence') {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0 || n > 1) throw new Error('confidence must be a number from 0 to 1');
+      output.confidence = n;
+      continue;
+    }
+
+    if (field === 'expires_at') {
+      if (value === null || value === '') {
+        output.expires_at = null;
+      } else if (typeof value === 'string') {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) throw new Error('expires_at must be a valid date/time string, empty string, or null');
+        output.expires_at = date.toISOString();
+      } else {
+        throw new Error('expires_at must be a date/time string, empty string, or null');
+      }
+    }
+  }
+
+  return output;
+}
+
+async function updateMemory(id, input) {
+  const values = validateEditableMemory(input);
+  const fields = Object.keys(values);
+  if (fields.length === 0) return getMemory(id);
+
+  const params = [];
+  const assignments = fields.map(field => {
+    params.push(field === 'metadata' ? JSON.stringify(values[field]) : values[field]);
+    const cast = field === 'metadata' ? '::jsonb' : '';
+    return `${field} = $${params.length}${cast}`;
+  });
+
+  params.push(id);
+  const result = await pool.query(`
+    update agent_memories
+    set ${assignments.join(', ')}, updated_at = now()
+    where id = $${params.length}
+    returning
+      id,
+      namespace,
+      category,
+      key,
+      content,
+      metadata,
+      importance,
+      confidence,
+      created_at,
+      updated_at,
+      last_accessed_at,
+      access_count,
+      last_confirmed_at,
+      expires_at
+  `, params);
+
+  return result.rows[0] ?? null;
+}
+
+async function deleteMemory(id) {
+  const result = await pool.query('delete from agent_memories where id = $1 returning id', [id]);
+  return result.rows[0] ?? null;
 }
 
 async function stats() {
@@ -325,6 +477,21 @@ const page = `<!doctype html>
     .rank-text { font-size: 13px; line-height: 1.35; color: #eef2ff; word-break: break-word; }
     .rank-meter { height: 6px; border-radius: 999px; background: rgba(255,255,255,.10); overflow: hidden; margin-top: 10px; }
     .rank-meter > div { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #52d399, #8d81ff); }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .actions button { padding: 7px 9px; font-size: 12px; }
+    button.danger { background: rgba(255, 93, 93, .24); border-color: rgba(255, 93, 93, .55); color: #ffdddd; }
+    dialog { width: min(760px, calc(100vw - 34px)); border: 1px solid rgba(255,255,255,.18); border-radius: 16px; background: #10172a; color: #e7ecff; box-shadow: 0 30px 90px rgba(0,0,0,.55); }
+    dialog::backdrop { background: rgba(0,0,0,.65); backdrop-filter: blur(2px); }
+    .modal-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .modal-head h2 { margin: 0; font-size: 18px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .field { display: grid; gap: 6px; }
+    .field.full { grid-column: 1 / -1; }
+    label { color: #aeb9e8; font-size: 12px; font-weight: 700; }
+    textarea { min-height: 96px; resize: vertical; border: 1px solid rgba(255,255,255,.16); border-radius: 10px; background: rgba(255,255,255,.08); color: #e7ecff; padding: 10px 12px; font: inherit; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+    .notice { padding: 10px 12px; border-radius: 10px; background: rgba(255, 188, 66, .12); border: 1px solid rgba(255, 188, 66, .28); color: #ffe0a3; margin: 10px 0; }
+    .error { color: #ffb7b7; min-height: 18px; margin-top: 8px; }
     @media (max-width: 1000px) { .cards { grid-template-columns: repeat(2, 1fr); } .grid, .toolbar { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -349,7 +516,7 @@ const page = `<!doctype html>
         <h2>记忆列表</h2>
         <div style="overflow:auto; max-height: 760px;">
           <table>
-            <thead><tr><th>ID</th><th>Scope</th><th>Key</th><th>Content</th><th>Usage</th><th>Expiry</th></tr></thead>
+            <thead><tr><th>ID</th><th>Scope</th><th>Key</th><th>Content</th><th>Usage</th><th>Expiry</th><th>Actions</th></tr></thead>
             <tbody id="rows"></tbody>
           </table>
         </div>
@@ -369,13 +536,51 @@ const page = `<!doctype html>
         </div>
       </aside>
     </section>
+    <dialog id="editor">
+      <form method="dialog" id="editorForm">
+        <div class="modal-head">
+          <h2 id="editorTitle">编辑记忆</h2>
+          <button class="secondary" value="cancel" type="button" id="closeEditor">关闭</button>
+        </div>
+        <div class="notice">注意：修改 content/namespace/category/key/metadata 会让旧 embedding 失效并置空；如需语义搜索保持最新，请之后运行 backfill embeddings。</div>
+        <div class="form-grid">
+          <div class="field"><label for="editNamespace">Namespace</label><input id="editNamespace" required /></div>
+          <div class="field"><label for="editCategory">Category</label><input id="editCategory" required /></div>
+          <div class="field"><label for="editKey">Key（留空为 null）</label><input id="editKey" /></div>
+          <div class="field"><label for="editExpiresAt">Expires at（留空为永久）</label><input id="editExpiresAt" type="datetime-local" /></div>
+          <div class="field"><label for="editImportance">Importance 0-10</label><input id="editImportance" type="number" min="0" max="10" step="1" /></div>
+          <div class="field"><label for="editConfidence">Confidence 0-1</label><input id="editConfidence" type="number" min="0" max="1" step="0.01" /></div>
+          <div class="field full"><label for="editContent">Content</label><textarea id="editContent" required></textarea></div>
+          <div class="field full"><label for="editMetadata">Metadata JSON object</label><textarea id="editMetadata"></textarea></div>
+        </div>
+        <div class="error" id="editorError"></div>
+        <div class="modal-actions">
+          <button class="secondary" type="button" id="cancelEditor">取消</button>
+          <button type="submit">保存</button>
+        </div>
+      </form>
+    </dialog>
   </main>
   <script>
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s ?? '').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
     const fmtDate = (s) => s ? new Date(s).toLocaleString() : '永久';
     const daysText = (n) => n === null || n === undefined ? '永久' : Number(n) < 0 ? '已过期' : Number(n).toFixed(1) + ' 天';
+    let editingId = null;
     async function get(path) { const r = await fetch(path); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+    async function sendJson(path, method, body) {
+      const r = await fetch(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || await r.text());
+      return r.json();
+    }
+
+    function toDatetimeLocal(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return '';
+      const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+      return local.toISOString().slice(0, 16);
+    }
 
     function card(label, value, sub = '') {
       return '<div class="card"><div class="label">' + esc(label) + '</div><div class="value">' + esc(value) + '</div><div class="muted">' + esc(sub) + '</div></div>';
@@ -396,6 +601,59 @@ const page = `<!doctype html>
         + '<div class="rank-meter"><div style="width:' + percent + '%"></div></div>'
         + '</div>'
         + '</div>';
+    }
+
+    async function openEditor(id) {
+      editingId = id;
+      $('editorError').textContent = '';
+      const m = await get('/api/memories/' + encodeURIComponent(id));
+      $('editorTitle').textContent = '编辑记忆 #' + m.id;
+      $('editNamespace').value = m.namespace || '';
+      $('editCategory').value = m.category || '';
+      $('editKey').value = m.key || '';
+      $('editContent').value = m.content || '';
+      $('editMetadata').value = JSON.stringify(m.metadata || {}, null, 2);
+      $('editImportance').value = m.importance ?? 0;
+      $('editConfidence').value = m.confidence ?? 1;
+      $('editExpiresAt').value = toDatetimeLocal(m.expires_at);
+      $('editor').showModal();
+    }
+
+    async function deleteMemory(id) {
+      if (!confirm('确定删除记忆 #' + id + '？此操作不可恢复。')) return;
+      await sendJson('/api/memories/' + encodeURIComponent(id), 'DELETE');
+      await load();
+    }
+
+    async function saveEditor(event) {
+      event.preventDefault();
+      if (!editingId) return;
+      $('editorError').textContent = '';
+      let metadata;
+      try {
+        metadata = JSON.parse($('editMetadata').value || '{}');
+      } catch (error) {
+        $('editorError').textContent = 'Metadata 必须是 JSON object：' + error.message;
+        return;
+      }
+
+      try {
+        await sendJson('/api/memories/' + encodeURIComponent(editingId), 'PATCH', {
+          namespace: $('editNamespace').value,
+          category: $('editCategory').value,
+          key: $('editKey').value,
+          content: $('editContent').value,
+          metadata,
+          importance: Number($('editImportance').value),
+          confidence: Number($('editConfidence').value),
+          expires_at: $('editExpiresAt').value
+        });
+        $('editor').close();
+        editingId = null;
+        await load();
+      } catch (error) {
+        $('editorError').textContent = error.message;
+      }
     }
 
     async function load() {
@@ -430,6 +688,7 @@ const page = `<!doctype html>
           + '<td class="content">' + esc(m.content) + '</td>'
           + '<td>访问 ' + esc(m.access_count || 0) + '<br><span class="muted">' + esc(m.last_accessed_at ? fmtDate(m.last_accessed_at) : '未访问') + '</span></td>'
           + '<td><span class="pill ' + esc(status) + '">' + esc(status) + '</span><br>' + esc(daysText(m.days_until_expiry)) + '<br><span class="muted">' + esc(fmtDate(m.expires_at)) + '</span></td>'
+          + '<td><div class="actions"><button type="button" data-edit="' + esc(m.id) + '">Edit</button><button class="danger" type="button" data-delete="' + esc(m.id) + '">Delete</button></div></td>'
           + '</tr>';
       }).join('');
 
@@ -442,6 +701,15 @@ const page = `<!doctype html>
     $('refresh').addEventListener('click', load);
     for (const id of ['q', 'namespace', 'category', 'status']) $(id).addEventListener('change', load);
     $('q').addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
+    $('rows').addEventListener('click', e => {
+      const editId = e.target?.dataset?.edit;
+      const deleteId = e.target?.dataset?.delete;
+      if (editId) openEditor(editId).catch(err => alert(err.message));
+      if (deleteId) deleteMemory(deleteId).catch(err => alert(err.message));
+    });
+    $('editorForm').addEventListener('submit', saveEditor);
+    $('closeEditor').addEventListener('click', () => $('editor').close());
+    $('cancelEditor').addEventListener('click', () => $('editor').close());
     load().catch(err => { document.body.innerHTML = '<pre style="padding:24px;color:#ffb7b7">' + esc(err.stack || err) + '</pre>'; });
   </script>
 </body>
@@ -450,13 +718,38 @@ const page = `<!doctype html>
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://${host}:${port}`);
+    const memoryId = parseMemoryId(url.pathname);
 
-    if (url.pathname === '/') return html(res, page);
-    if (url.pathname === '/api/health') return json(res, { ok: true });
-    if (url.pathname === '/api/stats') return json(res, await stats());
-    if (url.pathname === '/api/memories') return json(res, await listMemories(url.searchParams));
-    if (url.pathname === '/api/expiring') return json(res, await expiring(url.searchParams));
-    if (url.pathname === '/api/cleanup-candidates') return json(res, await cleanupCandidates(url.searchParams));
+    if (req.method === 'GET' && url.pathname === '/') return html(res, page);
+    if (req.method === 'GET' && url.pathname === '/api/health') return json(res, { ok: true });
+    if (req.method === 'GET' && url.pathname === '/api/stats') return json(res, await stats());
+    if (req.method === 'GET' && url.pathname === '/api/memories') return json(res, await listMemories(url.searchParams));
+    if (req.method === 'GET' && url.pathname === '/api/expiring') return json(res, await expiring(url.searchParams));
+    if (req.method === 'GET' && url.pathname === '/api/cleanup-candidates') return json(res, await cleanupCandidates(url.searchParams));
+
+    if (memoryId !== null) {
+      if (req.method === 'GET') {
+        const memory = await getMemory(memoryId);
+        return memory ? json(res, memory) : notFound(res);
+      }
+
+      if (req.method === 'PATCH') {
+        try {
+          const memory = await updateMemory(memoryId, await readJsonBody(req));
+          return memory ? json(res, memory) : notFound(res);
+        } catch (error) {
+          return badRequest(res, error.message);
+        }
+      }
+
+      if (req.method === 'DELETE') {
+        const deleted = await deleteMemory(memoryId);
+        return deleted ? json(res, { ok: true, id: deleted.id }) : notFound(res);
+      }
+
+      res.setHeader('allow', 'GET, PATCH, DELETE');
+      return json(res, { error: 'method not allowed' }, 405);
+    }
 
     return notFound(res);
   } catch (error) {

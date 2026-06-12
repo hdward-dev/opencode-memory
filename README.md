@@ -136,8 +136,13 @@ The dashboard exposes:
 - `/api/health`
 - `/api/stats`
 - `/api/memories`
+- `/api/memories/:id` (`GET`, `PATCH`, `DELETE`)
 - `/api/expiring`
 - `/api/cleanup-candidates`
+
+The local web UI supports editing and deleting memories from the list. Editable fields are `namespace`, `category`, `key`, `content`, `metadata`, `importance`, `confidence`, and `expires_at`; leaving `expires_at` empty makes the memory permanent. The dashboard intentionally stays local-only by default and does not require auth when bound to `127.0.0.1`.
+
+Dashboard edits currently do **not** recompute pgvector embeddings inline. If you change `content`, `namespace`, `category`, `key`, or `metadata`, the dashboard invalidates the old embedding by setting it to `null`; run the embedding backfill tool afterwards to refresh semantic search.
 
 A launchd example is available at [`examples/launchd/cc.geekland.oc-memory-dashboard.plist`](examples/launchd/cc.geekland.oc-memory-dashboard.plist). Replace all placeholder paths and database values before use.
 
